@@ -2,8 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-from scipy.differentiate import derivative
 from scipy.integrate import solve_ivp
+
+def radius(t):
+    return 2 * np.sin(t / 10)
+    # return 1
+
+def dradius(t):
+    return 2 * np.cos(t / 10) / 10
+    # return 0
 
 simulation_fps = 500
 display_fps = 30
@@ -11,18 +18,19 @@ subsample_factor = simulation_fps // display_fps
 tau_span = (0, 10)
 tau_eval = np.linspace(*tau_span, simulation_fps * int(np.ceil(tau_span[1] - tau_span[0])))
 
+t0 = 0
 theta0 = 0.01
 phi0 = 0
-dtheta0 = 4
-dphi0 = 5
+dtheta0 = 5
+dphi0 = 0
 
-y0 = [1, 1, theta0, dtheta0, phi0, dphi0]
+# Computes the initial conditions required for the geodesic
+def initial_time(variant, t0, theta0, dtheta0):
+    a2 = radius(t0) ** 2
+    return np.sqrt(-variant + a2 * dtheta0 ** 2 + a2 * np.sin(theta0) ** 2 * dphi0 ** 2)
 
-def radius(t):
-    return 2 * np.sin(t / 10)
-
-def dradius(t):
-    return 2 * np.cos(t / 10) / 10
+y0 = [1, initial_time(-1, t0, theta0, dtheta0), theta0, dtheta0, phi0, dphi0]
+print(y0)
 
 def geodesics(tau, X):
     try:
