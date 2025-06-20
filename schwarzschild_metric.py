@@ -5,31 +5,37 @@ import matplotlib.animation as anim
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 
-lim = 20
 simulation_fps = 250
-display_fps = 30
+display_fps = 15
 subsample_factor = simulation_fps // display_fps
+restart_timeout = 2
 
-tau_span = (0, 20)
+tau_span = (0, 10)
 tau_eval = np.linspace(*tau_span, simulation_fps * (tau_span[1] - tau_span[0]))
 
-G = 2
+G = 1
 M = 1
+c = 1
 
-# r0 = 10
-# dr0 = 0
-# theta0 = np.pi / 4
-# phi0 = 0
-# dtheta0 = 0.5
-# dphi0 = 0
+r_horizon = 2 * G * M / c ** 2
+r_isco = 6 * G * M / c ** 2
 
-# Multiple orbits
-r0 = 30
-dr0 = -20.0
+lim = 10
+
+r0 = 6.085
+dr0 = -0.5
 theta0 = np.pi / 4
 phi0 = 0
-dtheta0 = 1.01244760309
+dtheta0 = 0.5
 dphi0 = 0
+
+# ISCO
+# r0 = r_isco
+# dr0 = 0
+# theta0 = np.pi / 2
+# dtheta0 = 0
+# phi0 = 0
+# dphi0 = 0.0
 
 # Slingshot
 # r0 = 20
@@ -40,7 +46,7 @@ dphi0 = 0
 # dphi0 = 0
 
 def initial_time(k, r0, dr0, theta0, dtheta0, dphi0):
-    L = 1 / (1 - 2 * G * M / r0)
+    L = 1 / (1 - 2 * G * M / (r0 * c ** 2))
     return np.sqrt(k + L ** 2 * dr0 ** 2 + L * r0 ** 2 * dtheta0 ** 2 + L * r0 ** 2 * np.sin(theta0) ** 2 * dphi0 ** 2)
 
 y0 = [0, initial_time(1, r0, dr0, theta0, dtheta0, dphi0), r0, dr0, theta0, dtheta0, phi0, dphi0]
@@ -51,12 +57,17 @@ def termination_event(tau, X):
     return r - 2 * G * M
 
 def geodesics(tau, X):
+    progress = (tau - tau_span[0]) / (tau_span[1] - tau_span[0])
+    bar_size = 20
+    symbols = int(np.ceil(progress * 20))
+    print(f"Simulation progress: [{symbols * '#'}{(bar_size - symbols) * ' '}] {progress * 100:.2f}%", end  = "\r")
+
     t, dt, r, dr, theta, dtheta, phi, dphi = X
 
-    horizon_dist = r - 2 * G * M
+    a = r - 2 * G * M
 
-    ddt = - (2 * G * M) / (r * horizon_dist) * dr * dt
-    ddr = (2 * G * M) / (r * horizon_dist) * (dr ** 2) + horizon_dist * (dtheta ** 2) + horizon_dist * np.sin(theta) ** 2 * dphi ** 2 - (G * M * horizon_dist) / (r ** 3) * (dt ** 2)
+    ddt = - (2 * G * M) / (r * a) * dr * dt
+    ddr = (2 * G * M) / (r * a) * (dr ** 2) + a * (dtheta ** 2 + np.sin(theta) ** 2 * dphi ** 2) - (G * M * c ** 2) / (r * (r * c ** 2 - 2 * G * M)) * (dt ** 2)
     ddtheta = np.sin(theta) * np.cos(theta) * (dphi ** 2) - (2 / r) * dr * dphi
     ddphi = -2 * dr * dphi / r - 2 * dtheta * dphi / np.tan(theta)
 
@@ -71,7 +82,7 @@ def geodesics(tau, X):
         ddphi
     ]
 
-sol = solve_ivp(geodesics, tau_span, y0, t_eval = tau_eval, events = termination_event)
+sol = solve_ivp(geodesics, tau_span, y0, t_eval = tau_eval, events = termination_event, method = "Radau")
 print(f"Simulation status: {sol.status}. {sol.message}")
 
 # Only pick out every few frames
@@ -133,20 +144,20 @@ ax.set_title("Geodesic in Schwarzschild spacetime")
 ax.set_xlabel("x")
 ax.set_ylabel("y")
 ax.set_zlabel("z")
-ax.view_init(elev = 30, azim = 60)
+ax.view_init(elev = 45, azim = 45)
 ax.dist = 8
 
 ax.plot_surface(sphere_x, sphere_y, sphere_z, color = 'black', edgecolor = 'gray', alpha = 0.5)
 
 line, = ax.plot([], [], linestyle = 'solid', color = 'orange', label = "Trajectory (proper time, infaller's view)")
 line.set_clip_box(None)
+# particle = ax.scatter(0, 0, 0, marker = '^', s = 100)
 observer_line, = ax.plot([], [], linestyle = 'dashed', alpha = 0.5, color = 'blue', label = "Trajectory (observer's viewpoint)")
 observer_line.set_clip_box(None)
 
 ax.legend()
 
-time_text = ax.text2D(0.05, 0.95, '', transform = ax.transAxes)
-velocity_text = ax.text2D(0.05, 0.90, '', transform = ax.transAxes)
+info_text = ax.text2D(0.05, 0.95, '', transform = ax.transAxes)
 
 observer_t = np.linspace(t[0], t[-1])
 observer_r = interp1d(t, r, kind = 'cubic', bounds_error = False, fill_value = 'extrapolate')(observer_t)
@@ -157,23 +168,41 @@ observer_x = observer_r * np.sin(observer_theta) * np.cos(observer_phi)
 observer_y = observer_r * np.sin(observer_theta) * np.sin(observer_phi)
 observer_z = observer_r * np.cos(observer_theta)
 
+frames = len(ts)
 def update(frame):
+    if frame >= frames:
+        # Animation has finished, wait before restarting
+        # return particle, observer_line, info_text
+        return line, observer_line, info_text
+
     line.set_data(x[:frame], y[:frame])
     line.set_3d_properties(z[:frame])
+    # particle._offsets3d = ([x[frame]], [y[frame]], [z[frame]])
 
-    # observer_line.set_data(observer_x[:frame], observer_y[:frame])
-    # observer_line.set_3d_properties(observer_z[:frame])
+    observer_line.set_data(observer_x[:frame], observer_y[:frame])
+    observer_line.set_3d_properties(observer_z[:frame])
 
     # Proper time is the time experienced by the particle itself
     # Coordinate time is the time experienced by the viewer outside the gravitational field.
-    time_text.set_text(f"Proper time: {tau[frame]:.2f}, coordinate time: {t[frame]:.2f}")
-    velocity_text.set_text(f"Proper velocity: {v_mag[frame]:.2f}")
+    info_text.set_text(
+        f"Proper time: {tau[frame]:.2f}, coordinate time: {t[frame]:.2f}\n"
+        f"Distance from event horizon: {r[frame] - 2 * G * M / c ** 2:.2f}, velocity: {v_mag[frame]:.2f}"
+    )
     
-    return line, observer_line, time_text, velocity_text
+    return line, observer_line, info_text
     # return line, time_text
 
 animation = anim.FuncAnimation(
-    fig, update, frames = len(ts), interval = 1000 / display_fps, blit = True
+    fig, update, frames = frames + display_fps * restart_timeout, interval = 1000 / display_fps, blit = True
 )
+
+# from manim import *
+
+# class SchwarzschildGeodesic(ThreeDScene):
+#     def construct(self):
+#         self.set_camera_orientation(phi = 75 * DEGREES, theta = 45 * DEGREES, distance = 8)
+
+#         sphere = Sphere(radius = r_horizon, )
+
 
 plt.show()
