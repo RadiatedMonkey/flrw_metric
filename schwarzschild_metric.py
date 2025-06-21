@@ -1,14 +1,13 @@
+from manim import *
+
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as anim
 
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 
-simulation_fps = 250
-display_fps = 15
+simulation_fps = 500
+display_fps = config.frame_rate
 subsample_factor = simulation_fps // display_fps
-restart_timeout = 2
 
 tau_span = (0, 10)
 tau_eval = np.linspace(*tau_span, simulation_fps * (tau_span[1] - tau_span[0]))
@@ -23,7 +22,7 @@ r_isco = 6 * G * M / c ** 2
 lim = 10
 
 r0 = 6.085
-dr0 = -0.5
+dr0 = -0.6
 theta0 = np.pi / 4
 phi0 = 0
 dtheta0 = 0.5
@@ -86,10 +85,10 @@ sol = solve_ivp(geodesics, tau_span, y0, t_eval = tau_eval, events = termination
 print(f"Simulation status: {sol.status}. {sol.message}")
 
 # Only pick out every few frames
-ts = np.arange(0, len(sol.t), subsample_factor)
+subsampled = np.arange(0, len(sol.t), subsample_factor)
 
-tau = sol.t[ts]
-t, dt, r, dr, theta, dtheta, phi, dphi = (sol.y[i][ts] for i in range(8))
+tau = sol.t[subsampled]
+t, dt, r, dr, theta, dtheta, phi, dphi = (sol.y[i][subsampled] for i in range(8))
 
 x = r * np.sin(theta) * np.cos(phi)
 y = r * np.sin(theta) * np.sin(phi)
@@ -116,49 +115,6 @@ sphere_x = sphere_r * np.sin(sphere_phi) * np.cos(sphere_theta)
 sphere_y = sphere_r * np.sin(sphere_phi) * np.sin(sphere_theta)
 sphere_z = sphere_r * np.cos(sphere_phi)
 
-# fig = plt.figure(figsize = (15, 10))
-# ax = fig.add_subplot(111, projection = '3d')
-
-# ax.set_xlim([-lim, lim])
-# ax.set_ylim([-lim, lim])
-# ax.set_zlim([-lim, lim])
-# ax.set_box_aspect([1, 1, 1])
-# ax.set_title("Geodesic in Schwarzschild spacetime")
-# ax.set_xlabel("x")
-# ax.set_ylabel("y")
-# ax.set_zlabel("z")
-# ax.plot(x, y, z, label = "Geodesic path")
-# ax.plot_surface(sphere_x, sphere_y, sphere_z, color = 'black', edgecolor = 'gray', alpha = 0.5)
-
-fig = plt.figure(figsize = (10, 7))
-fig.subplots_adjust(left = 0, right = 1, bottom = 0, top = 1)
-ax = fig.add_subplot(111, projection = '3d')
-
-ax.set_axis_off()
-ax.set_xlim([-lim, lim])
-ax.set_ylim([-lim, lim])
-ax.set_zlim([-lim, lim])
-ax.set_box_aspect([1, 1, 1])
-ax.set_clip_on(False)
-ax.set_title("Geodesic in Schwarzschild spacetime")
-ax.set_xlabel("x")
-ax.set_ylabel("y")
-ax.set_zlabel("z")
-ax.view_init(elev = 45, azim = 45)
-ax.dist = 8
-
-ax.plot_surface(sphere_x, sphere_y, sphere_z, color = 'black', edgecolor = 'gray', alpha = 0.5)
-
-line, = ax.plot([], [], linestyle = 'solid', color = 'orange', label = "Trajectory (proper time, infaller's view)")
-line.set_clip_box(None)
-# particle = ax.scatter(0, 0, 0, marker = '^', s = 100)
-observer_line, = ax.plot([], [], linestyle = 'dashed', alpha = 0.5, color = 'blue', label = "Trajectory (observer's viewpoint)")
-observer_line.set_clip_box(None)
-
-ax.legend()
-
-info_text = ax.text2D(0.05, 0.95, '', transform = ax.transAxes)
-
 observer_t = np.linspace(t[0], t[-1])
 observer_r = interp1d(t, r, kind = 'cubic', bounds_error = False, fill_value = 'extrapolate')(observer_t)
 observer_theta = interp1d(t, theta, kind = 'cubic', bounds_error = False, fill_value = 'extrapolate')(observer_t)
@@ -168,41 +124,26 @@ observer_x = observer_r * np.sin(observer_theta) * np.cos(observer_phi)
 observer_y = observer_r * np.sin(observer_theta) * np.sin(observer_phi)
 observer_z = observer_r * np.cos(observer_theta)
 
-frames = len(ts)
-def update(frame):
-    if frame >= frames:
-        # Animation has finished, wait before restarting
-        # return particle, observer_line, info_text
-        return line, observer_line, info_text
+normalization = np.sqrt(np.max(r))
+print(f"Dividing by {normalization} to normalize coordinates to [0, 1]")
 
-    line.set_data(x[:frame], y[:frame])
-    line.set_3d_properties(z[:frame])
-    # particle._offsets3d = ([x[frame]], [y[frame]], [z[frame]])
+stack_coords = np.column_stack([x, y, z]) / normalization
 
-    observer_line.set_data(observer_x[:frame], observer_y[:frame])
-    observer_line.set_3d_properties(observer_z[:frame])
+config.background_color = WHITE
 
-    # Proper time is the time experienced by the particle itself
-    # Coordinate time is the time experienced by the viewer outside the gravitational field.
-    info_text.set_text(
-        f"Proper time: {tau[frame]:.2f}, coordinate time: {t[frame]:.2f}\n"
-        f"Distance from event horizon: {r[frame] - 2 * G * M / c ** 2:.2f}, velocity: {v_mag[frame]:.2f}"
-    )
-    
-    return line, observer_line, info_text
-    # return line, time_text
+class SchwarzschildGeodesic(ThreeDScene):
+    def construct(self):
+        self.set_camera_orientation(phi = 75 * DEGREES, theta = 45 * DEGREES, zoom = 1)
 
-animation = anim.FuncAnimation(
-    fig, update, frames = frames + display_fps * restart_timeout, interval = 1000 / display_fps, blit = True
-)
+        event_horizon = Sphere(radius = r_horizon / normalization, color = BLACK, fill_opacity = 1)
+        self.add(event_horizon)
 
-# from manim import *
+        trace = VMobject(color = BLUE)
+        particle = Dot3D(stack_coords[0], radius = 0.1, color = BLUE)
+        self.add(particle, trace)
 
-# class SchwarzschildGeodesic(ThreeDScene):
-#     def construct(self):
-#         self.set_camera_orientation(phi = 75 * DEGREES, theta = 45 * DEGREES, distance = 8)
+        for i in range(len(subsampled)):
+            particle.move_to(stack_coords[i])
+            trace.set_points_as_corners(stack_coords[:i])
+            self.wait(1 / display_fps)
 
-#         sphere = Sphere(radius = r_horizon, )
-
-
-plt.show()
